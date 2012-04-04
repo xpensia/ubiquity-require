@@ -1,4 +1,4 @@
-// ubiquity-require/client/path.js
+// ubiquity-require/browser/path.js
 
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,7 +25,9 @@ var __pathDefineModule = function(){
   
   var exports = {};
   
-  var paths = {};
+  var process;
+  process = process || {};
+  process.cwd = process.cwd || function() { return '/'; };
   
   // resolves . and .. elements in a path array with directory names there
   // must be no slashes, empty elements, or device names (c:\) in the array
@@ -202,34 +204,12 @@ var __pathDefineModule = function(){
     return splitPath(path)[3];
   };
   
-  
-  exports.exists = function(path, callback) {
-    callback(!!paths[path]);
-  };
-  
-  
-  exports.existsSync = function(path) {
-    return !!paths[path];
-  };
-  
-  exports.add = function(path, type) {
-    paths[path] = type;
-  };
-  
-  exports.del = function(path) {
-    for(var p in paths) {
-      if(p == path || p.indexOf(path+'/') === 0) {
-        delete paths[p];
-      }
-    }
-  };
-  
-  exports.get = function(path) {
-    return paths[path];
-  };
-  
   exports._makeLong = function(path) {
     return path;
+  };
+  
+  exports.isAbsolute = function(path) {
+    return path[0] == '/';
   };
 
   return exports;

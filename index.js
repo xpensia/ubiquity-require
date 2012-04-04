@@ -1,6 +1,6 @@
 
 // loader
-require('./server/require.js');
+require('./nodejs/require.js');
 
 var urequire = {
   // connect middleware
