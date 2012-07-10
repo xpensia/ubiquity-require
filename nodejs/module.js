@@ -12,11 +12,15 @@ var _data = {};
 var evBus = new EventEmitter();
 module.exports = evBus;
 
+var loading = {};
+
 function DefineBlock(module, dependencies, callback) {
     this.params = new Array(dependencies.length);
     this.remain = dependencies.length;
     this.module = module;
     this.callback = callback;
+
+    this.ev = new EventEmitter();
 
     for(var i=0; i<dependencies.length; i++) {
         var dep = dependencies[i];
@@ -28,7 +32,7 @@ function DefineBlock(module, dependencies, callback) {
                 this.remain--;
             }
             else {
-                evBus.once(dep, this.receiveData.bind(this, i));
+                evBus.once(dep, this.receiveData.bind(this, i, dep));
             }
         }
         else {
@@ -39,7 +43,8 @@ function DefineBlock(module, dependencies, callback) {
                 this.remain--;
             }
             else {
-                evBus.once('file:'+file, this.receiveData.bind(this, i));
+                var mod = Module._cache[file];
+                mod.ev.once('loaded', this.receiveData.bind(this, i, file));
             }
         }
     }
@@ -49,23 +54,20 @@ function DefineBlock(module, dependencies, callback) {
     }
 }
 DefineBlock.prototype = {
-    receiveData: function(i, data) {
+    receiveData: function(i, name, data) {
         this.params[i] = data;
         if(--this.remain <= 0) {
             this.call();
         }
     },
     call: function() {
-        var res = this.callback.apply(this.module, this.params);
-        if(res) {
-            evBus.emit('file:'+this.module.filename, res);
-            this.module.exports = res;
-            if(this.defined) {
-                console.warn('Multiple define block with return value in', this.module.filename);
-            }
-            else {
-                this.defined = true;
-            }
+        this.module.exports = this.callback.apply(this.module, this.params) || {};
+        this.module.ev.emit('loaded', this.module.exports);
+        if(this.module.defined) {
+            console.warn('WARNING : Multiple define blocks in', this.module.filename);
+        }
+        else {
+            this.module.defined = true;
         }
     }
 };
@@ -82,12 +84,7 @@ Module.prototype.define = function(dependencies, callback) {
         throw new TypeError("You must pass a callback to define");
     }
     this.exports = undefined;
-    new DefineBlock(this, dependencies, function() {
-        callback.apply(this, arguments);
-        if(typeof this.ready == 'function') {
-
-        }
-    });
+    new DefineBlock(this, dependencies, callback);
 };
 
 Module.prototype.provide = function(name, data) {
@@ -101,8 +98,18 @@ Module.prototype.provide = function(name, data) {
     evBus.emit(name, data);
 };
 
+// REPL support ! :D
+function rootModule(module) {
+    while(module.parent) {
+        module = module.parent;
+    }
+    return module;
+}
+
 require.extensions['.js'] = function(module, filename) {
     module.defined = false;
+    module.ev = new EventEmitter();
+
     var content = fs.readFileSync(filename, 'utf8');
     // strip utf8 BOM, SEE https://github.com/joyent/node/blob/master/lib/module.js#L450
     if (content.charCodeAt(0) === 0xFEFF) {
@@ -115,11 +122,11 @@ require.extensions['.js'] = function(module, filename) {
     _require.resolve = function(request) {
         return Module._resolveFilename(request, module);
     };
-    _require.main = process.mainModule;
+    _require.main = process.mainModule?process.mainModule:rootModule(module);
     _require.extensions = Module._extensions;
     _require.cache = Module._cache;
 
-    var p = path.dirname(require.main.filename),
+    var p = path.dirname(_require.main.filename),
         file = path.relative(p, filename),
         ctx = {};
     for (var k in global) {
