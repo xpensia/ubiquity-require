@@ -32,14 +32,20 @@ function DefineBlock(module, dependencies, callback) {
             }
         }
         else {
-            evBus.emit('requestModule', dep);
-            this.params[i] = module.require(dep);
-            this.remain--;
+            var file = Module._resolveFilename(dep, module);
+            evBus.emit('requestModule', file);
+            this.params[i] = module.require(file);
+            if(this.params[i]) {
+                this.remain--;
+            }
+            else {
+                evBus.once('file:'+file, this.receiveData.bind(this, i));
+            }
         }
     }
 
     if(this.remain <= 0) {
-        this.call();
+        process.nextTick(this.call.bind(this));
     }
 }
 DefineBlock.prototype = {
@@ -52,6 +58,7 @@ DefineBlock.prototype = {
     call: function() {
         var res = this.callback.apply(this.module, this.params);
         if(res) {
+            evBus.emit('file:'+this.module.filename, res);
             this.module.exports = res;
             if(this.defined) {
                 console.warn('Multiple define block with return value in', this.module.filename);
@@ -74,7 +81,13 @@ Module.prototype.define = function(dependencies, callback) {
     if(typeof callback != 'function') {
         throw new TypeError("You must pass a callback to define");
     }
-    new DefineBlock(this, dependencies, callback);
+    this.exports = undefined;
+    new DefineBlock(this, dependencies, function() {
+        callback.apply(this, arguments);
+        if(typeof this.ready == 'function') {
+
+        }
+    });
 };
 
 Module.prototype.provide = function(name, data) {

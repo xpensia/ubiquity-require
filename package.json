@@ -2,7 +2,7 @@
   "author": "Jean-Sébastien Tremblay <jeansebtr@xpensia.com> (http://blog.jeansebtr.com/)",
   "name": "ubiquity-require",
   "description": "Client/Server async require",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "homepage": "https://github.com/xpensia/ubiquity-require",
   "repository": {
     "type": "git",
