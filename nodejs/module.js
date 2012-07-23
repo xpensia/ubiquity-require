@@ -4,40 +4,38 @@ var path = require('path'),
     fs = require('fs');
 
 // don't be afraid of this undocumented module module
-var Module = require('module');
+var Module = module.exports = require('module');
 
 var EventEmitter = require('events').EventEmitter;
 
-var _data = {};
-var evBus = new EventEmitter();
-module.exports = evBus;
-
-var loading = {};
+var Context = require('./context.js');
 
 function DefineBlock(module, dependencies, callback) {
     this.params = new Array(dependencies.length);
     this.remain = dependencies.length;
     this.module = module;
     this.callback = callback;
-
-    this.ev = new EventEmitter();
+    this.listeners = [];
 
     for(var i=0; i<dependencies.length; i++) {
         var dep = dependencies[i];
         var pos, match;
         if(dep[0] == '@') {
-            evBus.emit('requestVar', dep);
-            if(typeof _data[dep] != 'undefined') {
-                this.params[i] = _data[dep];
+            var data = this.module.ctx.get(dep);
+            if(typeof data != 'undefined') {
+                this.params[i] = data;
                 this.remain--;
             }
-            else {
-                evBus.once(dep, this.receiveData.bind(this, i, dep));
+            if(this.listeners.indexOf(dep) != -1) {
+                this.listeners.push(dep);
             }
+            var cb = this.receiveData.bind(this, i, dep);
+            cb.source = this;
+            this.listeners.push(cb);
+            this.module.ctx.on(dep, cb);
         }
         else {
             var file = Module._resolveFilename(dep, module);
-            evBus.emit('requestModule', file);
             this.params[i] = module.require(file);
             if(this.params[i]) {
                 this.remain--;
@@ -62,14 +60,75 @@ DefineBlock.prototype = {
     },
     call: function() {
         this.module.exports = this.callback.apply(this.module, this.params) || {};
-        this.module.ev.emit('loaded', this.module.exports);
-        if(this.module.defined) {
-            console.warn('WARNING : Multiple define blocks in', this.module.filename);
-        }
-        else {
-            this.module.defined = true;
+        this.module.ctx.emit('defined:'+this.module.filename, this.module.exports);
+        this.module.defined = true;
+    },
+    clean: function() {
+        
+    }
+};
+
+Module.prototype.extend = function() {
+    this.defined = false;
+    this.ctx = (this.parent && this.parent.ctx) || Context.default;
+
+    var self = this;
+    var ctx = this._globals = {};
+    var _require = this.require.bind(this);
+
+    _require.resolve = function(request) {
+        return Module._resolveFilename(request, self);
+    };
+    _require.main = process.mainModule?process.mainModule:rootModule(this);
+    _require.extensions = Module._extensions;
+    _require.cache = Module._cache;
+
+    for (var k in global) {
+        ctx[k] = global[k];
+    }
+    ctx.define = this.define.bind(this);
+    ctx.require = _require;
+    ctx.__filename = this.filename;
+    ctx.__dirname = path.dirname(this.filename);
+    ctx.module = this;
+    ctx.exports = this.exports;
+};
+
+Module.prototype.copy = function(ctx) {
+    var module = new Module();
+    for(var k in this) {
+        if(this.hasOwnProperty(k)) {
+            module[k] = this[k];
         }
     }
+    if(ctx) {
+        module.use(ctx);
+    }
+    return module;
+};
+
+Module.prototype.reload = function() {
+    if(this.blocks && this.blocks.length) {
+        for(var i=0; i<this.blocks.length; i++) {
+            this.blocks[i].clean();
+        }
+    }
+    this.blocks = [];
+
+    var content = fs.readFileSync(this.filename, 'utf8');
+    // strip utf8 BOM, SEE https://github.com/joyent/node/blob/master/lib/module.js#L450
+    if (content.charCodeAt(0) === 0xFEFF) {
+        content = content.slice(1);
+    }
+    content = content.replace(/^\#\!.*/, '');
+
+    var p = path.dirname(this._globals.require.main.filename),
+        file = path.relative(p, this.filename);
+    vm.runInNewContext(content, this._globals, file);
+    if(this.blocks.length > 1) {
+        console.warn('WARNING : Multiple define blocks in', this.module.filename);
+    }
+    this.ctx.emit('loaded', this.filename);
 };
 
 Module.prototype.define = function(dependencies, callback) {
@@ -84,7 +143,7 @@ Module.prototype.define = function(dependencies, callback) {
         throw new TypeError("You must pass a callback to define");
     }
     this.exports = undefined;
-    new DefineBlock(this, dependencies, callback);
+    this.blocks.push(new DefineBlock(this, dependencies, callback));
 };
 
 Module.prototype.provide = function(name, data) {
@@ -94,8 +153,7 @@ Module.prototype.provide = function(name, data) {
     if(typeof data == 'undefined') {
         throw new TypeError("Can't provide `undefined` data.");
     }
-    _data[name] = data;
-    evBus.emit(name, data);
+    this.ctx.set(name, data);
 };
 
 // REPL support ! :D
@@ -107,37 +165,7 @@ function rootModule(module) {
 }
 
 require.extensions['.js'] = function(module, filename) {
-    module.defined = false;
-    module.ev = new EventEmitter();
-
-    var content = fs.readFileSync(filename, 'utf8');
-    // strip utf8 BOM, SEE https://github.com/joyent/node/blob/master/lib/module.js#L450
-    if (content.charCodeAt(0) === 0xFEFF) {
-        content = content.slice(1);
-    }
-    content = content.replace(/^\#\!.*/, '');
-
-    var _require = module.require.bind(module);
-
-    _require.resolve = function(request) {
-        return Module._resolveFilename(request, module);
-    };
-    _require.main = process.mainModule?process.mainModule:rootModule(module);
-    _require.extensions = Module._extensions;
-    _require.cache = Module._cache;
-
-    var p = path.dirname(_require.main.filename),
-        file = path.relative(p, filename),
-        ctx = {};
-    for (var k in global) {
-        ctx[k] = global[k];
-    }
-    ctx.define = module.define.bind(module);
-    ctx.require = _require;
-    ctx.__filename = filename;
-    ctx.__dirname = path.dirname(filename);
-    ctx.module = module;
-    ctx.exports = module.exports;
-
-    vm.runInNewContext(content, ctx, file);
+    module.extend();
+    module.ctx.emit('required', filename);
+    module.reload();
 };
