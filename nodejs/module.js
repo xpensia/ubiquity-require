@@ -97,14 +97,6 @@ Module.prototype.provide = function(name, data) {
     evBus.emit(name, data);
 };
 
-// REPL support ! :D
-function rootModule(module) {
-    while(module.parent) {
-        module = module.parent;
-    }
-    return module;
-}
-
 Module.wrapper[0] += '\
     var define;\
     if(module.define && !define) {\
