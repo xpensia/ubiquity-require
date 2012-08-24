@@ -1,6 +1,5 @@
 
 var path = require('path'),
-    vm = require('vm'),
     fs = require('fs');
 
 // don't be afraid of this undocumented module module
@@ -106,38 +105,12 @@ function rootModule(module) {
     return module;
 }
 
-require.extensions['.js'] = function(module, filename) {
-    module.defined = false;
-    module.ev = new EventEmitter();
-
-    var content = fs.readFileSync(filename, 'utf8');
-    // strip utf8 BOM, SEE https://github.com/joyent/node/blob/master/lib/module.js#L450
-    if (content.charCodeAt(0) === 0xFEFF) {
-        content = content.slice(1);
-    }
-    content = content.replace(/^\#\!.*/, '');
-
-    var _require = module.require.bind(module);
-
-    _require.resolve = function(request) {
-        return Module._resolveFilename(request, module);
-    };
-    _require.main = process.mainModule?process.mainModule:rootModule(module);
-    _require.extensions = Module._extensions;
-    _require.cache = Module._cache;
-
-    var p = path.dirname(_require.main.filename),
-        file = path.relative(p, filename),
-        ctx = {};
-    for (var k in global) {
-        ctx[k] = global[k];
-    }
-    ctx.define = module.define.bind(module);
-    ctx.require = _require;
-    ctx.__filename = filename;
-    ctx.__dirname = path.dirname(filename);
-    ctx.module = module;
-    ctx.exports = module.exports;
-
-    vm.runInNewContext(content, ctx, file);
-};
+Module.wrapper[0] += '\
+    var define;\
+    if(module.define && !define) {\
+        var EventEmitter = require("events").EventEmitter;\
+        module.defined = false;\
+        module.ev = new EventEmitter();\
+        define = module.define.bind(module);\
+    }\
+';
